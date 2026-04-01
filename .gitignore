@@ -22,3 +22,6 @@ __pycache__/
 results/figures/*.png
 results/metrics/*.csv
 results/releases/*.csv
+!results/figures/risk_vs_k.png
+!results/figures/utility_vs_k.png
+!results/metrics/experiment_summary.csv
