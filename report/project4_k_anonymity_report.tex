@@ -10,7 +10,6 @@
 \usepackage{tabularx}
 \usepackage{graphicx}
 \usepackage{float}
-\usepackage{caption}
 \geometry{a4paper, margin=1in}
 \graphicspath{{../results/figures/}}
 
@@ -31,158 +30,149 @@
 \maketitle
 
 \begin{abstract}
-This report presents the implementation and evaluation of a k-anonymity pipeline for the Adult Census Income dataset. The study compares two quasi-identifier sets, two anonymization strategies, and three privacy levels ($k=2,5,10$), producing 12 experiment settings in total. The implemented pipeline uses only generalization and suppression, as required by the course project. A synthetic auxiliary dataset is then used to perform exact-match linkage attacks against each anonymized release. The main result is that all releases reduce the unique match rate to zero, but they do so in very different ways. The generalization-first strategy keeps all rows but achieves privacy by heavily coarsening the quasi-identifiers, while targeted suppression keeps more original detail but removes between 5.3\% and 28.2\% of records for QI Set A and between 7.8\% and 18.7\% for QI Set B. The experiments show a clear privacy--utility trade-off: increasing $k$ increases ambiguity and failed matches for the attacker, but also increases data loss and distributional distortion. Among the tested configurations, targeted suppression with low $k$ provides the best practical balance between privacy protection and utility.
+This report presents an implementation and evaluation of k-anonymity on the Adult Census Income dataset. The project compares two quasi-identifier sets, two anonymization strategies, and three privacy levels ($k=2,5,10$), resulting in 12 experiment settings. The pipeline uses only generalization and suppression, matching the project scope exactly. Linkage risk is evaluated with exact-match attacks using five independently sampled auxiliary datasets, and utility is measured through row retention, income-distribution shift, hours-per-week distortion, and a direct information-loss score that captures both suppression and generalization. Across all 12 settings, the exact unique match rate drops to zero. However, the strategies achieve that outcome very differently. The generalization-first strategy preserves all rows but incurs heavy information loss (0.67 to 0.92), while the improved targeted-suppression strategy combines mild generalization with selective removal and retains 94.0\% to 98.7\% of the data. The results show a clearer and more realistic privacy--utility trade-off than the initial baseline: stronger privacy increases attack failure, but it also increases information loss. The best overall balance in this implementation is achieved by targeted suppression with low $k$, especially QI Set A at $k=2$.
 \end{abstract}
 
 \section{Introduction}
-Removing names from a released dataset does not guarantee privacy. In many realistic data-sharing scenarios, individuals can still be re-identified by combining \textit{quasi-identifiers} such as age, sex, education, occupation, or country with external information. This is the classic linkage-attack problem: even when direct identifiers are removed, a rare combination of quasi-identifiers may still point to a single person.
+Removing names from a dataset does not make it automatically private. In many real data releases, individuals can still be re-identified by linking \textit{quasi-identifiers} such as age, sex, education, occupation, or location with external information. This is the central linkage-attack problem in data privacy.
 
-This project studies that risk through the lens of \textbf{k-anonymity}. A dataset satisfies k-anonymity when every released combination of selected quasi-identifiers appears in at least $k$ records. In principle, this should prevent an attacker from uniquely identifying a person by exact matching on the released quasi-identifiers. In practice, however, stronger anonymization often comes at the cost of lower analytical utility.
+This project studies that problem through \textbf{k-anonymity}. A release satisfies k-anonymity when every visible quasi-identifier combination appears in at least $k$ records. In theory, this should prevent exact unique linkage on those attributes. In practice, however, stronger privacy often requires more aggressive generalization or suppression, reducing the value of the released data.
 
-The goal of this project is therefore twofold:
-\begin{itemize}[leftmargin=*]
-    \item reduce re-identification risk through k-anonymity-based transformations, and
-    \item measure how those transformations affect the usefulness of the data.
-\end{itemize}
-
-The implementation follows the exact scope of Project 4 in the seminar: no differential privacy, no cryptography, and no l-diversity extensions. Only generalization and suppression are used.
+The goal of the project is therefore not only to enforce k-anonymity, but also to evaluate the privacy--utility trade-off created by different anonymization choices. The final system and report stay within the exact scope of Project 4: no l-diversity, no differential privacy, and no cryptography.
 
 \section{Problem Statement and Objectives}
 The project investigates the following question:
 
 \begin{quote}
-How do different values of $k$, different quasi-identifier choices, and different anonymization strategies affect exact-match linkage risk and data utility in the Adult Census Income dataset?
+How do different values of $k$, different quasi-identifier choices, and different anonymization strategies affect exact-match linkage risk and analytical utility in the Adult Census Income dataset?
 \end{quote}
 
-The concrete objectives are:
+The main objectives are:
 \begin{itemize}[leftmargin=*]
     \item build a reproducible Python pipeline for k-anonymization;
-    \item compare $k=2$, $k=5$, and $k=10$;
-    \item evaluate two quasi-identifier (QI) sets with different sparsity profiles;
-    \item compare a generalization-first strategy against a targeted-suppression strategy;
-    \item simulate an adversary using auxiliary data and report unique, ambiguous, and failed matches;
-    \item measure utility loss with interpretable summary metrics and plots.
+    \item evaluate $k=2$, $k=5$, and $k=10$;
+    \item compare two quasi-identifier (QI) sets;
+    \item compare a generalization-first strategy with a more balanced targeted-suppression strategy;
+    \item simulate linkage attacks using auxiliary data;
+    \item measure both attack outcomes and utility degradation with interpretable metrics.
 \end{itemize}
 
 \section{Related Work}
-k-anonymity was formalized as a model for privacy-preserving data release by Samarati and Sweeney and later developed further by Sweeney, who demonstrated that combinations of seemingly innocuous attributes can still enable re-identification after explicit identifiers are removed \cite{SamaratiSweeney1998,Sweeney2002}. This insight directly motivates the threat model used in this project.
+k-anonymity was formalized by Samarati and Sweeney and later developed by Sweeney as a practical model for limiting re-identification in released data \cite{SamaratiSweeney1998,Sweeney2002}. Their work established the core intuition behind this project: combinations of demographic attributes can identify individuals even after direct identifiers are removed.
 
-Bayardo and Agrawal studied optimal k-anonymization under generalization and suppression, showing that privacy enforcement and utility preservation must be balanced carefully \cite{BayardoAgrawal2005}. Their work motivates the heuristic strategies implemented here rather than an expensive global optimization approach.
+Bayardo and Agrawal examined optimal k-anonymization under generalization and suppression, showing that privacy protection and utility preservation must be balanced carefully \cite{BayardoAgrawal2005}. Their work motivates the heuristic search-based implementation used here rather than an expensive optimization procedure.
 
-Researchers later proposed \textit{l-diversity} and \textit{t-closeness} to address cases where k-anonymity alone still leaves sensitive attributes vulnerable to inference \cite{Machanavajjhala2007,Li2007}. These extensions are outside the scope of the course assignment, but they are important when interpreting the limitations of the results.
+Later work on \textit{l-diversity} and \textit{t-closeness} demonstrated that k-anonymity alone does not eliminate every privacy risk, especially when sensitive values remain homogeneous inside equivalence classes \cite{Machanavajjhala2007,Li2007}. Those extensions are outside this project's scope, but they help position its limitations.
 
-For a broader overview, Fung et al.\ survey anonymization models, attack assumptions, and utility trade-offs in privacy-preserving data publishing \cite{Fung2010}. The Adult dataset remains a standard benchmark for experiments in privacy and tabular data analysis because of its realistic mixture of continuous and categorical demographic attributes \cite{Kohavi1996,UCIAdult}.
+Fung et al.\ provide a broader survey of privacy-preserving data publishing methods and their trade-offs \cite{Fung2010}. The Adult dataset remains a widely used benchmark because of its realistic mixture of continuous and categorical demographic attributes \cite{Kohavi1996,UCIAdult}.
 
 \section{Dataset Description}
-\subsection{Source and Size}
-The project uses the \textbf{Adult Census Income} dataset from the UCI Machine Learning Repository. The local training split used in this project is stored at \texttt{data/raw/adult/adult.data}. It contains \textbf{32,561} records and \textbf{15} columns, which comfortably satisfies the minimum data-size expectation in the course description.
+\subsection{Source and Structure}
+The experiments use the \textbf{Adult Census Income} dataset from the UCI Machine Learning Repository. The local file used in this project is stored at \texttt{data/raw/adult/adult.data}. It contains \textbf{32,561} rows and \textbf{15} columns.
 
-\subsection{Observed Data Characteristics}
-Inspection of the local file produced the following summary:
-
+\subsection{Observed Dataset Characteristics}
+Inspection of the local data produced the following summary:
 \begin{itemize}[leftmargin=*]
     \item total rows: 32,561
     \item total columns: 15
     \item age range: 17 to 90, mean 38.58
     \item hours-per-week range: 1 to 99, mean 40.44
-    \item income distribution: 24,720 records with \texttt{<=50K} and 7,841 records with \texttt{>50K}
-    \item missing values encoded as \texttt{?}: \texttt{workclass} (1,836), \texttt{occupation} (1,843), and \texttt{native-country} (583)
+    \item income distribution: 24,720 with \texttt{<=50K} and 7,841 with \texttt{>50K}
+    \item missing values encoded as \texttt{?}: \texttt{workclass} (1,836), \texttt{occupation} (1,843), \texttt{native-country} (583)
 \end{itemize}
 
-The dataset is well suited for this project because it includes both common and sparse attribute values, making it possible to study the tension between privacy protection and information loss.
-
 \subsection{Attribute Roles}
-Table~\ref{tab:attribute_roles} summarizes how the columns were used in the experiments.
+Table~\ref{tab:attribute_roles} summarizes how the columns were used.
 
 \begin{table}[H]
 \centering
-\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.23\textwidth} >{\raggedright\arraybackslash}p{0.18\textwidth} X}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.24\textwidth} >{\raggedright\arraybackslash}p{0.18\textwidth} X}
 \toprule
 \textbf{Attribute} & \textbf{Role} & \textbf{Rationale} \\
 \midrule
-\texttt{income} & Sensitive attribute & Preserved for privacy and utility evaluation. \\
-\texttt{age}, \texttt{sex}, \texttt{education}, \texttt{marital-status} & QI Set A & Moderate-risk demographic combination with no missing values. \\
-\texttt{age}, \texttt{sex}, \texttt{occupation}, \texttt{native-country} & QI Set B & More detailed, sparser combination that represents a stronger linkage scenario. \\
-\texttt{hours-per-week}, \texttt{education-num} & Utility attributes & Kept to measure summary-statistic distortion. \\
-\texttt{workclass}, \texttt{relationship}, \texttt{race}, \texttt{capital-gain}, \texttt{capital-loss}, \texttt{fnlwgt} & Supporting / unused in matching & Available in the release, but not part of the chosen QI sets. \\
+\texttt{income} & Sensitive attribute & Preserved for risk and utility analysis. \\
+\texttt{age}, \texttt{sex}, \texttt{education}, \texttt{marital-status} & QI Set A & Moderate-risk demographic combination with stable categorical values. \\
+\texttt{age}, \texttt{sex}, \texttt{occupation}, \texttt{native-country} & QI Set B & Sparser, more detailed combination representing a stronger attack scenario. \\
+\texttt{hours-per-week}, \texttt{education-num} & Utility attributes & Retained for simple statistical comparisons. \\
+\texttt{workclass}, \texttt{relationship}, \texttt{race}, \texttt{capital-gain}, \texttt{capital-loss}, \texttt{fnlwgt} & Supporting attributes & Present in the dataset but not used in the selected QI sets. \\
 \bottomrule
 \end{tabularx}
-\caption{Attribute roles used in the project.}
+\caption{Attribute roles used in the experiments.}
 \label{tab:attribute_roles}
 \end{table}
 
 \subsection{Baseline Risk Before Anonymization}
-Before any transformation, the raw data already shows clear re-identification exposure:
+Before any transformation, the raw data already exhibits strong linkage risk:
 \begin{itemize}[leftmargin=*]
-    \item QI Set A yields 4,331 equivalence classes, including 1,724 singleton classes.
-    \item QI Set B yields 4,308 equivalence classes, including 2,526 singleton classes.
+    \item QI Set A creates 4,331 equivalence classes, including 1,724 singleton classes.
+    \item QI Set B creates 4,308 equivalence classes, including 2,526 singleton classes.
 \end{itemize}
 
-These singleton classes are exactly the patterns that make record linkage dangerous in practice.
+These singleton classes are the basic motivation for anonymization.
 
 \section{Threat Model}
-The attacker is assumed to possess an auxiliary dataset that contains quasi-identifiers for a subset of individuals plus an internal \texttt{person\_id}. The attacker does not know the sensitive attribute (\texttt{income}) but can observe the anonymized release and attempt exact matching on the visible quasi-identifiers.
+The attacker is assumed to have an auxiliary table containing quasi-identifiers for a subset of individuals and a synthetic \texttt{person\_id}. The attacker does not know the sensitive attribute (\texttt{income}) but can attempt exact matching between the auxiliary data and the released quasi-identifiers.
 
-In the implementation, the auxiliary dataset is created by sampling 20\% of the original records, producing \textbf{6,512} auxiliary records. This is a controlled simulation rather than an external real-world database, but it provides a direct way to measure how often exact linkage remains possible after anonymization.
+To make the evaluation more stable than a single random sample, the implementation generates \textbf{five} auxiliary datasets using different random seeds. Each auxiliary dataset contains 20\% of the original records, which corresponds to 6,512 sampled individuals. The reported linkage metrics are averages over those five attack runs.
 
 \section{Methodology}
 \subsection{Preprocessing}
-The pipeline loads the Adult dataset with explicit column names, trims categorical whitespace, converts \texttt{?} to missing values, and fills missing QI-related categories with \texttt{Unknown}. A synthetic \texttt{person\_id} is added only for evaluation. The sensitive attribute is preserved as both the original binary label and a numeric indicator column.
+The data pipeline:
+\begin{itemize}[leftmargin=*]
+    \item loads the Adult file with explicit column names,
+    \item trims categorical whitespace,
+    \item converts \texttt{?} to missing values,
+    \item replaces missing QI-related categories with \texttt{Unknown},
+    \item adds a synthetic \texttt{person\_id} for evaluation only,
+    \item preserves \texttt{income} as both a raw label and a binary indicator.
+\end{itemize}
 
 \subsection{Quasi-Identifier Sets}
-The experiments use the following two QI sets:
+The project evaluates:
 \begin{itemize}[leftmargin=*]
     \item \textbf{QI Set A:} \{\texttt{age}, \texttt{sex}, \texttt{education}, \texttt{marital-status}\}
     \item \textbf{QI Set B:} \{\texttt{age}, \texttt{sex}, \texttt{occupation}, \texttt{native-country}\}
 \end{itemize}
 
-QI Set B is intentionally more difficult because occupation and country are more detailed and contain rare values.
-
 \subsection{Generalization Hierarchies}
-The pipeline applies interpretable hierarchies rather than opaque transformations:
+Each QI uses an explicit hierarchy:
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Age:} exact age $\rightarrow$ 5-year bins $\rightarrow$ 10-year bins $\rightarrow$ broad age groups $\rightarrow$ full suppression
-    \item \textbf{Education:} exact label $\rightarrow$ grouped schooling levels $\rightarrow$ pre-college / college-or-higher $\rightarrow$ full suppression
-    \item \textbf{Marital status:} exact label $\rightarrow$ simplified marital groups $\rightarrow$ partnered / not-partnered $\rightarrow$ full suppression
-    \item \textbf{Occupation:} exact label $\rightarrow$ job family $\rightarrow$ white-collar / blue-collar / service / other $\rightarrow$ full suppression
-    \item \textbf{Native country:} exact country $\rightarrow$ region $\rightarrow$ US / non-US $\rightarrow$ full suppression
-    \item \textbf{Sex:} exact value $\rightarrow$ full suppression
+    \item \textbf{Age:} exact $\rightarrow$ 5-year bins $\rightarrow$ 10-year bins $\rightarrow$ broad age groups $\rightarrow$ suppression
+    \item \textbf{Education:} exact $\rightarrow$ grouped schooling levels $\rightarrow$ pre-college / college-or-higher $\rightarrow$ suppression
+    \item \textbf{Marital status:} exact $\rightarrow$ simplified categories $\rightarrow$ partnered / not-partnered $\rightarrow$ suppression
+    \item \textbf{Occupation:} exact $\rightarrow$ job family $\rightarrow$ high-level occupation class $\rightarrow$ suppression
+    \item \textbf{Native country:} exact $\rightarrow$ region $\rightarrow$ US / non-US $\rightarrow$ suppression
+    \item \textbf{Sex:} exact $\rightarrow$ suppression
 \end{itemize}
 
 \subsection{Anonymization Strategies}
 Two strategies were implemented:
 
 \paragraph{Generalization-first}
-This strategy progressively generalizes quasi-identifiers until all equivalence classes meet the k-anonymity threshold. It prioritizes row retention and suppresses rows only as a last resort. In the experiments, this strategy never removed rows.
+This strategy keeps all rows whenever possible and progressively generalizes the QIs until every equivalence class satisfies the target $k$. It minimizes suppression, but can over-coarsen the data.
 
 \paragraph{Targeted suppression}
-This strategy uses little or no generalization and instead removes rows that remain too rare under the chosen QI set. It preserves more original categorical detail in retained rows, but reduces release size.
+This strategy evaluates mild generalization steps and uses them only when they improve the overall release score. Rows that still remain too rare are then removed. Compared with the initial baseline, this version is more accurate because it allows limited generalization to reduce unnecessary row loss.
 
-\subsection{Risk and Utility Metrics}
-For each release, the following metrics were computed:
+\subsection{Evaluation Metrics}
+The project reports:
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Unique match rate}
-    \item \textbf{Ambiguous match rate}
-    \item \textbf{No match rate}
-    \item \textbf{Retention rate} and \textbf{suppression rate}
-    \item \textbf{Income distribution shift}
-    \item \textbf{Absolute change in mean and variance of hours per week}
+    \item unique match rate, ambiguous match rate, and no-match rate;
+    \item retention rate and suppression rate;
+    \item income-distribution shift;
+    \item absolute change in mean and variance of \texttt{hours-per-week};
+    \item \textbf{generalization loss} and \textbf{information-loss score}.
 \end{itemize}
 
+The information-loss score combines row suppression with the amount of generalization applied to the chosen QIs. This makes the utility analysis more complete than using distributional stability alone.
+
 \section{Experimental Design}
-The full experiment grid exactly matches the course requirements:
+The final grid exactly matches the course requirement:
 \[
 3 \text{ k-values} \times 2 \text{ QI sets} \times 2 \text{ strategies} = 12 \text{ runs.}
 \]
 
-The evaluated settings were:
-\begin{itemize}[leftmargin=*]
-    \item $k \in \{2,5,10\}$
-    \item QI Set A and QI Set B
-    \item generalization-first and targeted suppression
-\end{itemize}
-
-All experiment outputs were saved to:
+All releases, metrics, and figures are generated by \texttt{scripts/run\_experiments.py}. The key outputs are:
 \begin{itemize}[leftmargin=*]
     \item \texttt{results/metrics/experiment\_summary.csv}
     \item \texttt{results/releases/*.csv}
@@ -191,123 +181,109 @@ All experiment outputs were saved to:
 \end{itemize}
 
 \section{Results}
-\subsection{Main Finding}
-The strongest headline result is simple: \textbf{the unique match rate was reduced to zero in all 12 experiment settings}. This is exactly what we expect from a correctly enforced exact-match k-anonymity release. However, the mechanism by which that happened differed sharply across strategies:
+\subsection{Main Result}
+Across all 12 settings, the \textbf{unique match rate was reduced to zero}. This is consistent with the exact-match k-anonymity goal. The more informative post-anonymization distinction is therefore between:
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Generalization-first} achieved zero unique matches by aggressively coarsening quasi-identifiers, often to the point of full suppression.
-    \item \textbf{Targeted suppression} achieved zero unique matches by keeping the original QI values for retained rows and removing rare records instead.
+    \item \textbf{ambiguous matches}, where the attacker still sees multiple candidates, and
+    \item \textbf{no matches}, where the auxiliary record is no longer directly linkable at all.
 \end{itemize}
 
-\subsection{Risk Trends}
-Figure~\ref{fig:risk} plots re-identification risk as a function of $k$. Because unique matches are eliminated in every release, the meaningful distinction is between \textit{ambiguous matches} and \textit{no matches}. Generalization-first forces all auxiliary records into ambiguous matches, while targeted suppression increasingly converts risky individuals into no-match cases as $k$ grows.
+\subsection{Attack Failure}
+Figure~\ref{fig:risk} plots the no-match rate, which is the most useful attack-side metric in this implementation. Generalization-first produces zero no-match rate because it keeps every record and forces the attacker into total ambiguity. Targeted suppression increases the no-match rate as $k$ grows, which reflects stronger privacy at the cost of some data removal.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.88\textwidth]{risk_vs_k.png}
-\caption{Re-identification risk versus $k$ for both QI sets and both anonymization strategies.}
+\caption{Attack failure rate (no-match rate) versus $k$. Metrics are averaged across five auxiliary samples.}
 \label{fig:risk}
 \end{figure}
 
-\subsection{Utility Trends}
-Figure~\ref{fig:utility} shows utility loss measured by income-distribution shift. Targeted suppression produces a visible increase in distortion as $k$ rises. In contrast, generalization-first appears to have almost zero distributional distortion under this metric because it does not remove rows. That does \textbf{not} mean it preserves utility better overall; it means this specific metric does not capture how much semantic detail is lost when age, sex, country, or education are generalized away.
+\subsection{Utility Loss}
+Figure~\ref{fig:utility} plots the information-loss score. This metric is more accurate than simple distribution shift because it captures both removed rows and coarse generalization. Under this measure, the difference between the two strategies becomes much clearer: generalization-first has much higher loss even though it preserves row count, while targeted suppression remains far lower across all tested $k$ values.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.88\textwidth]{utility_vs_k.png}
-\caption{Utility loss versus $k$, using income-distribution shift as the plotted metric.}
+\caption{Utility loss versus $k$, measured by the combined information-loss score.}
 \label{fig:utility}
 \end{figure}
 
-\subsection{Targeted Suppression Results}
-Table~\ref{tab:targeted_results} summarizes the most interpretable strategy from a practical release perspective. For both QI sets, higher $k$ leads to more removed rows, a larger no-match rate for the attacker, and larger utility distortion.
+\subsection{Targeted-Suppression Results}
+Table~\ref{tab:targeted_results} summarizes the most practically useful strategy. The improved targeted-suppression pipeline now uses mild generalization to preserve more rows than the earlier baseline while keeping information loss relatively low.
 
 \begin{table}[H]
 \centering
 \small
-\begin{tabular}{llrrrr}
+\begin{tabular}{llrrrrr}
 \toprule
-\textbf{QI Set} & \textbf{$k$} & \textbf{Retention} & \textbf{Suppression} & \textbf{No-Match} & \textbf{Income Shift} \\
+\textbf{QI Set} & \textbf{$k$} & \textbf{Retention} & \textbf{No-Match} & \textbf{Info Loss} & \textbf{Income Shift} & \textbf{Levels} \\
 \midrule
-Set A & 2 & 94.7\% & 5.3\% & 5.2\% & 0.0053 \\
-Set A & 5 & 83.8\% & 16.2\% & 16.7\% & 0.0142 \\
-Set A & 10 & 71.8\% & 28.2\% & 29.0\% & 0.0210 \\
-Set B & 2 & 92.2\% & 7.8\% & 7.6\% & 0.0036 \\
-Set B & 5 & 86.9\% & 13.1\% & 12.6\% & 0.0088 \\
-Set B & 10 & 81.3\% & 18.7\% & 18.1\% & 0.0155 \\
+Set A & 2 & 98.6\% & 1.5\% & 0.076 & 0.0014 & \texttt{age:1} \\
+Set A & 5 & 97.2\% & 2.9\% & 0.150 & 0.0029 & \texttt{age:2} \\
+Set A & 10 & 94.0\% & 5.9\% & 0.177 & 0.0065 & \texttt{age:2} \\
+Set B & 2 & 98.7\% & 1.3\% & 0.157 & 0.0004 & \texttt{age:1, country:1} \\
+Set B & 5 & 98.7\% & 1.3\% & 0.239 & 0.0013 & \texttt{age:1, country:2} \\
+Set B & 10 & 98.5\% & 1.5\% & 0.323 & 0.0025 & \texttt{age:1, country:3} \\
 \bottomrule
 \end{tabular}
-\caption{Targeted-suppression results across both quasi-identifier sets.}
+\caption{Targeted-suppression results with averaged linkage metrics.}
 \label{tab:targeted_results}
 \end{table}
 
-Several patterns are clear:
+Several patterns stand out:
 \begin{itemize}[leftmargin=*]
-    \item For both QI sets, stronger privacy levels increase suppression and no-match rates.
-    \item QI Set A is slightly easier to preserve at low $k$, but becomes more distorted than QI Set B at higher $k$.
-    \item The best overall retention is achieved by QI Set A with targeted suppression at $k=2$ (94.7\% retained rows).
-    \item The smallest income-distribution shift is achieved by QI Set B with targeted suppression at $k=2$ (0.0036).
+    \item QI Set A at $k=2$ achieves the lowest information loss (0.076) and high retention (98.6\%), making it the best overall balance in this implementation.
+    \item QI Set B retains even more rows across all $k$ values, but it does so by progressively generalizing country information, which increases information loss.
+    \item For both QI sets, higher $k$ leads to higher attack failure and higher utility loss.
 \end{itemize}
 
 \subsection{Generalization-First Results}
-Table~\ref{tab:generalization_levels} shows the generalization patterns selected by the generalization-first strategy. This strategy retained all 32,561 rows in every run and made every auxiliary match ambiguous, but it did so by using very coarse released quasi-identifiers.
+Table~\ref{tab:generalization_results} shows why a retention-only view can be misleading. Generalization-first keeps all rows and forces every exact auxiliary match to become ambiguous, but it does so with very large generalization costs.
 
 \begin{table}[H]
 \centering
 \small
-\begin{tabular}{lll}
+\begin{tabular}{llrrl}
 \toprule
-\textbf{QI Set} & \textbf{$k$} & \textbf{Generalization Levels Applied} \\
+\textbf{QI Set} & \textbf{$k$} & \textbf{Retention} & \textbf{Info Loss} & \textbf{Generalization Levels} \\
 \midrule
-Set A & 2 & \texttt{age:4, sex:1, education:2, marital\_status:0} \\
-Set A & 5 & \texttt{age:4, sex:1, education:3, marital\_status:0} \\
-Set A & 10 & \texttt{age:4, sex:1, education:3, marital\_status:0} \\
-Set B & 2 & \texttt{age:4, sex:1, occupation:0, native\_country:3} \\
-Set B & 5 & \texttt{age:4, sex:1, occupation:0, native\_country:3} \\
-Set B & 10 & \texttt{age:4, sex:1, occupation:2, native\_country:3} \\
+Set A & 2 & 100.0\% & 0.667 & \texttt{age:4, sex:1, education:2, marital\_status:0} \\
+Set A & 5 & 100.0\% & 0.750 & \texttt{age:4, sex:1, education:3, marital\_status:0} \\
+Set A & 10 & 100.0\% & 0.750 & \texttt{age:4, sex:1, education:3, marital\_status:0} \\
+Set B & 2 & 100.0\% & 0.750 & \texttt{age:4, sex:1, occupation:0, native\_country:3} \\
+Set B & 5 & 100.0\% & 0.750 & \texttt{age:4, sex:1, occupation:0, native\_country:3} \\
+Set B & 10 & 100.0\% & 0.917 & \texttt{age:4, sex:1, occupation:2, native\_country:3} \\
 \bottomrule
 \end{tabular}
-\caption{Generalization levels selected by the generalization-first strategy.}
-\label{tab:generalization_levels}
+\caption{Generalization-first results.}
+\label{tab:generalization_results}
 \end{table}
 
-These settings show why row-retention alone is not a sufficient utility metric. For example, the strategy frequently suppresses \texttt{sex} entirely and pushes \texttt{age} to its maximum generalization level. That preserves row count, but substantially reduces the analytical value of the released quasi-identifiers.
+This table captures an important lesson: keeping all rows is not the same as keeping useful detail. The strategy reaches zero unique matches by heavily generalizing age and often suppressing sex or country information completely. That makes the released data much less informative even though simple distribution metrics remain unchanged.
 
 \section{Discussion}
-The experiments confirm the central privacy--utility trade-off expected from k-anonymity:
+The improved implementation produces a more realistic privacy--utility story than the earlier version.
+
+First, averaging over five auxiliary samples makes the linkage evaluation more stable. Second, allowing mild generalization inside the targeted-suppression strategy reduces unnecessary row loss. Third, the information-loss score makes the utility analysis more honest by penalizing both suppression and coarse generalization.
+
+The results also show that the ``best'' strategy depends on what is valued:
 \begin{itemize}[leftmargin=*]
-    \item stronger privacy requirements reduce the attacker's ability to isolate records;
-    \item but stronger privacy also either removes more records or coarsens the data more aggressively.
+    \item If preserving row count is the only priority, generalization-first looks attractive.
+    \item If preserving meaningful detail matters, targeted suppression is clearly better.
+    \item If the goal is the most balanced release in this implementation, QI Set A with targeted suppression at $k=2$ is the strongest choice.
 \end{itemize}
 
-The exact-match attack outcome is especially instructive. Since every release satisfies k-anonymity under the chosen QIs, unique matches disappear completely. Therefore, the more meaningful post-anonymization distinction becomes:
-\begin{itemize}[leftmargin=*]
-    \item \textbf{ambiguous match}: the attacker still finds several possible candidates;
-    \item \textbf{no match}: the auxiliary individual is no longer represented in a directly matchable way.
-\end{itemize}
-
-From a practical point of view, targeted suppression is easier to interpret. It produces a visible and intuitive trade-off curve: as $k$ increases, privacy improves because more risky records disappear from exact matching, but utility decreases because fewer rows remain. Generalization-first produces a different kind of trade-off: it keeps all rows, yet the released QIs become so coarse that much of their value is lost even though simple distribution metrics remain stable.
-
-This also highlights a limitation of the current utility evaluation. Distributional stability alone does not capture the loss of granularity in categorical variables. A release with zero row loss can still be analytically weak if most quasi-identifiers are generalized to broad categories or completely suppressed. For that reason, the results should be interpreted jointly with the recorded generalization levels, not only with the utility plot.
+This final point is important for the seminar project. A privacy method should not be judged only by whether it prevents unique matches. It should also be judged by whether the released data remains interpretable and useful.
 
 \section{Limitations and Ethical Considerations}
-This project intentionally evaluates only \textbf{k-anonymity}, because that is the assigned project scope. As a result, the releases are not protected against all forms of attribute disclosure. If an equivalence class becomes homogeneous in income, an attacker may still infer the sensitive attribute even without uniquely identifying a person.
+This project still has important limitations. It evaluates only k-anonymity, so it does not address attribute disclosure inside homogeneous equivalence classes. The attacker model is simulated from the same source population rather than a truly independent real-world auxiliary database. The utility metrics are stronger than before, but they still do not capture every downstream use of the data.
 
-The attacker model is also simplified: the auxiliary dataset is sampled from the same underlying data rather than obtained from an independent real-world source. This makes the evaluation controlled and reproducible, but it does not fully capture every possible linkage environment.
+Nevertheless, the project now provides a more accurate and complete foundation: multiple attack samples, an improved suppression strategy, and a utility measure that reflects both data removal and value coarsening.
 
-Another limitation is metric selection. The current utility metrics capture row retention and some distributional changes, but they understate semantic information loss when attributes are heavily generalized. A stronger final version of the project could add category-level divergence measures or lightweight predictive utility tests.
-
-Finally, demographic datasets include socially sensitive information, so the analysis should be understood as a study of privacy methodology rather than a statement about the people represented in the data.
+Finally, because the dataset contains socially sensitive demographic information, the analysis should be interpreted strictly as a study of anonymization methods, not as a judgment about the represented individuals or groups.
 
 \section{Reproducibility}
-The project is fully reproducible from the repository. The core files are:
-\begin{itemize}[leftmargin=*]
-    \item \texttt{data/raw/adult/adult.data}
-    \item \texttt{scripts/run\_experiments.py}
-    \item \texttt{src/k\_anonymity\_risk\_analysis/*.py}
-    \item \texttt{results/metrics/experiment\_summary.csv}
-\end{itemize}
-
-The experiments can be rerun with:
+The full project can be reproduced from the repository using:
 \begin{verbatim}
 python3 -m venv .venv
 source .venv/bin/activate
@@ -315,10 +291,18 @@ python -m pip install -r requirements.txt
 python scripts/run_experiments.py
 \end{verbatim}
 
-\section{Conclusion}
-This project implemented and evaluated a complete k-anonymity pipeline for the Adult Census Income dataset. Across 12 experiment settings, the pipeline consistently removed exact unique matches under the chosen quasi-identifiers. However, the experiments also show that ``achieving k-anonymity'' does not have a single meaning in practice. One strategy can keep every row by heavily generalizing the released attributes, while another can preserve more original detail by removing risky rows.
+The most relevant files are:
+\begin{itemize}[leftmargin=*]
+    \item \texttt{data/raw/adult/adult.data}
+    \item \texttt{scripts/run\_experiments.py}
+    \item \texttt{src/k\_anonymity\_risk\_analysis/*.py}
+    \item \texttt{results/metrics/experiment\_summary.csv}
+\end{itemize}
 
-Among the tested configurations, low-$k$ targeted suppression provides the strongest practical balance for this project. In particular, targeted suppression with $k=2$ preserves more than 92\% of rows in both QI sets while keeping income distortion low and eliminating unique matches. At the same time, the results make clear that higher $k$ values impose real utility costs, and that utility should be evaluated not only through row counts and distributions, but also through the interpretability of the released quasi-identifiers.
+\section{Conclusion}
+This project implemented and evaluated a complete k-anonymity pipeline for the Adult Census Income dataset. The final version is more accurate and complete than the initial baseline because it averages attack outcomes across multiple auxiliary samples, improves the targeted-suppression strategy with mild generalization, and measures utility with a direct information-loss score.
+
+Across all 12 settings, the exact unique match rate dropped to zero. However, the way that result was achieved mattered greatly. Generalization-first eliminated exact uniqueness by heavily coarsening the released data, while targeted suppression achieved strong privacy with much lower information loss. In this implementation, the best practical trade-off is QI Set A with targeted suppression at $k=2$.
 
 \begin{thebibliography}{9}
 

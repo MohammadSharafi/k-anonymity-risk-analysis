@@ -80,34 +80,37 @@ def _run_targeted_suppression(
     levels: dict[str, int],
     order: list[str],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    stage_limits = {column: min(1, max_level(column)) for column in qi_columns}
+    best_levels = levels.copy()
+    best_release = _suppress_small_classes(generalize_frame(df, qi_columns, best_levels), qi_columns, k)
+    best_score = _targeted_release_score(best_release, len(df), best_levels, qi_columns)
 
     while True:
-        generalized = generalize_frame(df, qi_columns, levels)
-        release_df = _suppress_small_classes(generalized, qi_columns, k)
+        candidates: list[tuple[float, int, float, int, dict[str, int], pd.DataFrame]] = []
 
-        if not release_df.empty:
-            return release_df, levels
+        for rank, column in enumerate(order):
+            if best_levels[column] >= max_level(column):
+                continue
 
-        upgraded = False
-        for column in order:
-            if levels[column] < stage_limits[column]:
-                levels[column] += 1
-                upgraded = True
-                break
+            trial_levels = best_levels.copy()
+            trial_levels[column] += 1
+            generalized = generalize_frame(df, qi_columns, trial_levels)
+            release_df = _suppress_small_classes(generalized, qi_columns, k)
+            score = _targeted_release_score(release_df, len(df), trial_levels, qi_columns)
+            info_loss = _information_loss_score(trial_levels, qi_columns)
+            candidates.append((score, len(release_df), -info_loss, -rank, trial_levels, release_df))
 
-        if upgraded:
-            continue
+        if not candidates:
+            return best_release, best_levels
 
-        expanded = False
-        for column in order:
-            if stage_limits[column] < max_level(column):
-                stage_limits[column] += 1
-                expanded = True
-                break
+        candidates.sort(reverse=True)
+        candidate_score, _, _, _, candidate_levels, candidate_release = candidates[0]
 
-        if not expanded:
-            return release_df, levels
+        if candidate_score <= best_score + 1e-9:
+            return best_release, best_levels
+
+        best_score = candidate_score
+        best_levels = candidate_levels
+        best_release = candidate_release
 
 
 def _violating_rows_mask(df: pd.DataFrame, qi_columns: list[str], k: int) -> pd.Series:
@@ -155,10 +158,24 @@ def _best_generalization_step(
 
 
 def _information_loss_score(levels: dict[str, int], qi_columns: list[str]) -> float:
+    if not qi_columns:
+        return 0.0
+
     score = 0.0
     for column in qi_columns:
         maximum = max_level(column)
         if maximum == 0:
             continue
         score += levels[column] / maximum
-    return score
+    return score / len(qi_columns)
+
+
+def _targeted_release_score(
+    release_df: pd.DataFrame,
+    original_row_count: int,
+    levels: dict[str, int],
+    qi_columns: list[str],
+) -> float:
+    retention_rate = len(release_df) / original_row_count if original_row_count else 0.0
+    information_loss = _information_loss_score(levels, qi_columns)
+    return retention_rate - (0.18 * information_loss)

@@ -31,6 +31,8 @@ from k_anonymity_risk_analysis import (
     load_adult_dataset,
 )
 
+AUXILIARY_RANDOM_STATES = [42, 52, 62, 72, 82]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run k-anonymity experiments for the Adult dataset.")
@@ -57,14 +59,19 @@ def main() -> None:
         for strategy in STRATEGIES:
             for k in K_VALUES:
                 result = anonymize_dataset(df, qi_columns=qi_columns, k=k, strategy=strategy)
-                linkage_metrics = evaluate_linkage_risk(
-                    original_df=df,
+                linkage_metrics = _average_linkage_metrics(
+                    df=df,
                     release_df=result.release_df,
                     qi_columns=qi_columns,
                     levels=result.generalization_levels,
                     sample_fraction=args.sample_fraction,
                 )
-                utility_metrics = compute_utility_metrics(df, result.release_df)
+                utility_metrics = compute_utility_metrics(
+                    df,
+                    result.release_df,
+                    qi_columns=qi_columns,
+                    generalization_levels=result.generalization_levels,
+                )
 
                 release_path = releases_dir / f"{qi_set_name}_{strategy}_k{k}.csv"
                 result.release_df.to_csv(release_path, index=False)
@@ -87,15 +94,15 @@ def main() -> None:
 
     _plot_metric(
         summary_df=summary_df,
-        metric="unique_match_rate",
-        ylabel="Unique Match Rate",
-        title="Re-identification Risk vs k",
+        metric="no_match_rate",
+        ylabel="No-Match Rate",
+        title="Attack Failure Rate vs k",
         output_path=figures_dir / "risk_vs_k.png",
     )
     _plot_metric(
         summary_df=summary_df,
-        metric="income_distribution_shift",
-        ylabel="Income Distribution Shift",
+        metric="information_loss_score",
+        ylabel="Information Loss Score",
         title="Utility Loss vs k",
         output_path=figures_dir / "utility_vs_k.png",
     )
@@ -135,6 +142,40 @@ def _plot_metric(
 
 def _format_levels(levels: dict[str, int]) -> str:
     return ",".join(f"{column}:{level}" for column, level in levels.items())
+
+
+def _average_linkage_metrics(
+    df: pd.DataFrame,
+    release_df: pd.DataFrame,
+    qi_columns: list[str],
+    levels: dict[str, int],
+    sample_fraction: float,
+) -> dict[str, float]:
+    metric_names = [
+        "auxiliary_size",
+        "unique_matches",
+        "ambiguous_matches",
+        "no_matches",
+        "unique_match_rate",
+        "ambiguous_match_rate",
+        "no_match_rate",
+    ]
+    aggregated = {name: 0.0 for name in metric_names}
+
+    for random_state in AUXILIARY_RANDOM_STATES:
+        metrics = evaluate_linkage_risk(
+            original_df=df,
+            release_df=release_df,
+            qi_columns=qi_columns,
+            levels=levels,
+            sample_fraction=sample_fraction,
+            random_state=random_state,
+        )
+        for name in metric_names:
+            aggregated[name] += float(metrics[name])
+
+    divisor = float(len(AUXILIARY_RANDOM_STATES))
+    return {name: value / divisor for name, value in aggregated.items()}
 
 
 if __name__ == "__main__":
