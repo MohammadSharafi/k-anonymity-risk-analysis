@@ -1,0 +1,23 @@
+.DS_Store
+__pycache__/
+.pytest_cache/
+.cache/
+.venv/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# Generated experiment outputs
+results/figures/*.png
+results/metrics/*.csv
+results/releases/*.csv

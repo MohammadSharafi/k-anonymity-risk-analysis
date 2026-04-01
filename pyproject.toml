@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k-anonymity-risk-analysis"
+version = "0.1.0"
+description = "MSCS 714 seminar project on k-anonymity, linkage attacks, and privacy-utility trade-off analysis."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

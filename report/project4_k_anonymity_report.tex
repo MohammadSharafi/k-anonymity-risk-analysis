@@ -1,0 +1,359 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\geometry{a4paper, margin=1in}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=cyan,
+    citecolor=blue
+}
+
+\title{\textbf{Project 4 Starter Report: k-Anonymity-Based Data Anonymization and Re-identification Risk Analysis}\\
+\large MSCS 714 Data Privacy Seminar}
+\author{Mohammad Sharafi}
+\date{April 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This project studies how effectively \textbf{k-anonymity} can reduce re-identification risk in a structured tabular dataset while preserving enough utility for basic statistical analysis. The Adult Census Income dataset is used as the main case study because it contains realistic demographic quasi-identifiers, a binary sensitive attribute, and enough records to support multiple anonymization experiments. The implementation will apply hierarchical generalization and targeted suppression for $k \in \{2,5,10\}$, evaluate linkage risk through an auxiliary-data matching attack, and measure utility loss using distributional and summary-statistic changes. The report is intentionally written as a strong project-start document: it fixes the dataset, defines the threat model, selects two quasi-identifier sets, specifies two anonymization strategies, and lays out the full experimental design required for the seminar project.
+\end{abstract}
+
+\section{Introduction}
+Removing names from a dataset does not guarantee privacy. In many real data-sharing settings, individuals can still be re-identified by combining \textit{quasi-identifiers} such as age, sex, education, occupation, or location with information from external sources. This creates a classic privacy risk: a dataset that appears de-identified may still enable linkage attacks when a unique or rare combination of quasi-identifiers remains visible.
+
+This project addresses that risk using \textbf{k-anonymity}, one of the foundational privacy models in data publishing. A dataset satisfies k-anonymity when every released combination of chosen quasi-identifiers appears in at least $k$ records. Intuitively, this means an attacker should not be able to distinguish one person from fewer than $k$ candidates using those attributes alone. Achieving this property requires transforming the data, typically through \textit{generalization} (replacing exact values with broader categories) and \textit{suppression} (masking or removing risky values or records).
+
+The goal of this work is not only to produce a k-anonymous release, but also to analyze the central privacy--utility trade-off. Stronger anonymization usually reduces linkage risk, but it can also make the released data less useful for later analysis. Therefore, this project evaluates both sides: (1) how often a simulated attacker can still uniquely match people, and (2) how much the transformed release distorts useful statistical properties of the original data.
+
+\section{Problem Statement and Objectives}
+The project investigates the following question:
+
+\begin{quote}
+How do different values of $k$, different quasi-identifier choices, and different anonymization strategies affect re-identification risk and analytical utility in the Adult Census Income dataset?
+\end{quote}
+
+The main objectives are:
+
+\begin{itemize}[leftmargin=*]
+    \item Build a reproducible Python pipeline for k-anonymization using only generalization and suppression.
+    \item Compare at least three privacy levels: $k=2$, $k=5$, and $k=10$.
+    \item Evaluate at least two quasi-identifier (QI) sets with different re-identification difficulty.
+    \item Compare at least two anonymization strategies: a generalization-first strategy and a targeted-suppression strategy.
+    \item Simulate a linkage attack using an auxiliary dataset and report unique, ambiguous, and failed matches.
+    \item Measure utility loss with simple, interpretable statistics and plots.
+\end{itemize}
+
+\section{Related Work}
+k-anonymity was formalized as a model for privacy-preserving data release by Samarati and Sweeney and later developed further by Sweeney, who showed that combinations of seemingly innocuous attributes can enable re-identification even after explicit identifiers are removed \cite{SamaratiSweeney1998,Sweeney2002}. This core insight remains directly relevant to modern tabular data sharing.
+
+Practical anonymization is not only about defining the privacy model, but also about computing effective transformations. Bayardo and Agrawal studied optimal k-anonymization under generalization and suppression, highlighting the computational difficulty of minimizing information loss while enforcing privacy constraints \cite{BayardoAgrawal2005}. Their work motivates the heuristic, policy-based approach used in this project.
+
+Later research showed that k-anonymity alone does not protect against all inference risks. In particular, \textit{l-diversity} and \textit{t-closeness} were proposed to address attribute disclosure when equivalence classes remain too homogeneous in the sensitive attribute \cite{Machanavajjhala2007,Li2007}. These models are outside the scope of this seminar project, but they are important for positioning the limitations of the chosen method.
+
+For a broader perspective on privacy-preserving publishing, Fung et al.\ provide a useful survey of anonymization concepts, attack models, and utility trade-offs \cite{Fung2010}. The Adult dataset has also been widely used as a benchmark in privacy and machine learning literature due to its mixed attribute types and realistic demographic structure \cite{Kohavi1996,UCIAdult}.
+
+\section{Dataset Description}
+\subsection{Source and Rationale}
+The project uses the \textbf{Adult Census Income} dataset from the UCI Machine Learning Repository. This dataset is a strong fit for Project 4 because it is large enough for the course requirements, contains several demographic fields that naturally function as quasi-identifiers, and includes a clear binary sensitive attribute related to income.
+
+The raw training file already present in the project folder is \texttt{adult (1)/adult.data}. It contains \textbf{32,561} records and \textbf{15} attributes. According to the dataset documentation, the broader Adult collection includes 48,842 records across train and test splits, but this project will initially focus on the training portion already available in the repository.
+
+\subsection{Observed Data Characteristics}
+Inspection of the local dataset shows the following properties:
+
+\begin{itemize}[leftmargin=*]
+    \item Total rows: 32,561
+    \item Total columns: 15
+    \item Income distribution: 24,720 records with \texttt{<=50K} and 7,841 records with \texttt{>50K}
+    \item Age range: 17 to 90, with mean age 38.58
+    \item Hours-per-week range: 1 to 99, with mean 40.44
+    \item Missing values encoded as \texttt{?}: \texttt{workclass} (1,836), \texttt{occupation} (1,843), \texttt{native-country} (583)
+\end{itemize}
+
+These characteristics are useful for anonymization experiments. The dataset mixes continuous and categorical fields, contains both common and rare attribute values, and includes enough sparsity that exact quasi-identifier combinations can become highly identifying.
+
+\subsection{Attribute Roles}
+Table~\ref{tab:attribute_roles} defines how the main columns will be used in this project.
+
+\begin{table}[h]
+\centering
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.23\textwidth} >{\raggedright\arraybackslash}p{0.18\textwidth} X}
+\toprule
+\textbf{Attribute} & \textbf{Role} & \textbf{Rationale} \\
+\midrule
+\texttt{income} & Sensitive attribute & Target attribute preserved for privacy and utility evaluation. \\
+\texttt{age}, \texttt{sex}, \texttt{education}, \texttt{marital-status} & QI Set A & Demographic combination with moderate re-identification risk and no missing values. \\
+\texttt{age}, \texttt{sex}, \texttt{occupation}, \texttt{native-country} & QI Set B & More detailed and higher-risk quasi-identifier set for a stronger attack scenario. \\
+\texttt{hours-per-week}, \texttt{education-num} & Non-QI analytical attributes & Retained for simple utility analysis without using them in matching. \\
+\texttt{fnlwgt}, \texttt{relationship}, \texttt{race}, \texttt{capital-gain}, \texttt{capital-loss}, \texttt{workclass} & Supporting / excluded from first release & Available for future extensions, but not required for the initial attack design. \\
+\bottomrule
+\end{tabularx}
+\caption{Planned attribute roles for the anonymization experiments.}
+\label{tab:attribute_roles}
+\end{table}
+
+Unlike many real administrative datasets, the Adult dataset does not include explicit direct identifiers such as names or national ID numbers. This is helpful for the project because it mirrors a common real-world misconception: a dataset can look ``safe'' after removing direct identifiers and still be vulnerable to re-identification through quasi-identifiers alone.
+
+\subsection{Initial Risk Before Anonymization}
+Before any transformation, exact quasi-identifier combinations already suggest non-trivial linkage risk. Using the raw data:
+
+\begin{itemize}[leftmargin=*]
+    \item QI Set A produces 4,331 distinct equivalence classes, including 1,724 singleton classes.
+    \item QI Set B produces 4,308 distinct equivalence classes, including 2,526 singleton classes.
+\end{itemize}
+
+These singleton groups represent records that are uniquely identifiable under exact matching on the corresponding QI set. This motivates the need for anonymization before release.
+
+\section{Threat Model}
+The adversary is assumed to possess an auxiliary table containing real individuals and their quasi-identifiers, plus a synthetic \texttt{person\_id} used only for evaluation. The attacker does not know the sensitive attribute (\texttt{income}) but can observe the released anonymized dataset and attempt exact-match linkage on the visible quasi-identifiers.
+
+This is a realistic model for linkage risk because the Adult dataset itself does not include names, yet outside demographic information could still be available from public records, surveys, or institutional databases. The attack goal is to determine whether an auxiliary individual maps to exactly one record, multiple records, or no records in the anonymized release.
+
+\section{Methodology}
+\subsection{Preprocessing}
+The preprocessing stage will:
+
+\begin{itemize}[leftmargin=*]
+    \item Load \texttt{adult.data} with the documented column names.
+    \item Trim whitespace and standardize missing values encoded as \texttt{?}.
+    \item Convert missing categorical QI values to a consistent placeholder such as \texttt{Unknown} before anonymization.
+    \item Remove attributes not needed for the selected release schema.
+    \item Preserve \texttt{income} as the main sensitive attribute for downstream evaluation.
+\end{itemize}
+
+\subsection{Quasi-Identifier Sets}
+To satisfy the course requirement of evaluating at least two QI sets, the project will use:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{QI Set A:} \{\texttt{age}, \texttt{sex}, \texttt{education}, \texttt{marital-status}\}
+    \item \textbf{QI Set B:} \{\texttt{age}, \texttt{sex}, \texttt{occupation}, \texttt{native-country}\}
+\end{itemize}
+
+QI Set A is expected to be easier to anonymize because it includes stable demographic categories with no missing values in the raw file. QI Set B is expected to be harder because occupation and country are more detailed and include rare values, increasing the chance of singleton or near-singleton groups.
+
+\subsection{Generalization Hierarchies}
+The anonymization pipeline will use explicit, interpretable hierarchies rather than opaque transformations. Planned examples include:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Age:} exact age $\rightarrow$ 5-year bins $\rightarrow$ 10-year bins $\rightarrow$ broad adult ranges (e.g., 18--29, 30--44, 45--59, 60+)
+    \item \textbf{Education:} exact category $\rightarrow$ grouped schooling levels (primary / secondary / some college / undergraduate / graduate)
+    \item \textbf{Marital status:} exact category $\rightarrow$ broader groups (married / previously married / never married)
+    \item \textbf{Occupation:} exact category $\rightarrow$ broader job families (managerial-professional / clerical-sales / service / manual labor / military-other)
+    \item \textbf{Native country:} exact country $\rightarrow$ regional grouping (US / North America / Latin America / Europe / Asia / other)
+\end{itemize}
+
+These hierarchies keep the transformed values human-readable and make it easier to explain the privacy--utility trade-off in the final presentation.
+
+\subsection{Anonymization Strategies}
+Two strategies will be implemented and compared:
+
+\paragraph{Strategy 1: Generalization-First}
+The algorithm will progressively generalize the QIs until every equivalence class size is at least $k$. Only records that still violate the threshold after the maximum allowed generalization will be suppressed. This strategy prioritizes record retention and tends to preserve the overall dataset size.
+
+\paragraph{Strategy 2: Targeted Suppression}
+The algorithm will use lighter generalization but more aggressive suppression of risky attribute values or entire records that remain too rare. This strategy is expected to reduce some linkage risk more quickly, but it may distort marginal distributions and decrease data availability.
+
+\subsection{k-Anonymity Enforcement}
+For a selected QI set and chosen value of $k$, the release will be accepted only if every equivalence class defined by the released QIs has cardinality at least $k$. Formally, if $EC(q)$ is the set of records sharing quasi-identifier pattern $q$, then the release must satisfy
+\[
+\min_{q} |EC(q)| \geq k.
+\]
+
+The implementation will compute equivalence classes after each transformation step and continue applying hierarchy levels or suppression rules until the condition is satisfied.
+
+\section{Re-identification Risk Evaluation}
+\subsection{Auxiliary Dataset Construction}
+Because the source data does not include direct identifiers, the attack evaluation will construct a synthetic auxiliary table by sampling a subset of original records and attaching an internal \texttt{person\_id}. The auxiliary table will contain:
+
+\begin{itemize}[leftmargin=*]
+    \item \texttt{person\_id}
+    \item the selected QIs for the experiment
+    \item no sensitive attribute
+\end{itemize}
+
+This creates a controlled setting for measuring linkage success without fabricating unrealistic names or external records.
+
+\subsection{Exact-Match Linkage}
+For each anonymized release, the attack will perform exact matching between the auxiliary table and the released QIs. Each auxiliary individual will then fall into one of three outcomes:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Unique match:} exactly one record in the anonymized data matches the QIs
+    \item \textbf{Ambiguous match:} more than one record matches
+    \item \textbf{No match:} no record matches, often due to suppression or incompatible generalization
+\end{itemize}
+
+\subsection{Risk Metrics}
+The following course-required metrics will be reported:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Unique match rate}
+    \[
+    \frac{\# \text{unique auxiliary matches}}{\# \text{auxiliary records}}
+    \]
+    \item \textbf{Ambiguous match rate}
+    \[
+    \frac{\# \text{ambiguous auxiliary matches}}{\# \text{auxiliary records}}
+    \]
+    \item \textbf{No match rate}
+    \[
+    \frac{\# \text{failed auxiliary matches}}{\# \text{auxiliary records}}
+    \]
+\end{itemize}
+
+\section{Utility Evaluation}
+The project will use simple, defensible utility measures instead of heavy downstream machine learning. This keeps the evaluation aligned with the seminar requirements while remaining easy to explain.
+
+\subsection{Primary Utility Metrics}
+The main utility measures will be:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Suppression rate:} percentage of records removed or fully masked
+    \item \textbf{Income distribution shift:} absolute change in the proportion of \texttt{>50K} versus \texttt{<=50K}
+    \item \textbf{Hours-per-week summary distortion:} change in mean and variance of \texttt{hours-per-week}
+    \item \textbf{Grouped analysis stability:} comparison of income proportions across broad education or sex groups before and after anonymization
+\end{itemize}
+
+\subsection{Interpretation}
+These measures capture both dataset-level distortion and analysis-level usefulness. For example, a release that drastically changes the proportion of high-income records or distorts the average weekly work hours would be less useful for descriptive analysis, even if it achieves strong anonymity.
+
+\section{Experimental Design}
+The experiment grid will satisfy the course requirements exactly. Each combination in Table~\ref{tab:experiment_grid} will be evaluated.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Dimension} & \textbf{Values} & \textbf{Purpose} \\
+\midrule
+$k$ values & 2, 5, 10 & Compare privacy levels \\
+QI sets & Set A, Set B & Compare attacker knowledge scenarios \\
+Strategies & Generalization-first, targeted suppression & Compare anonymization behavior \\
+\bottomrule
+\end{tabular}
+\caption{Required experimental grid for Project 4.}
+\label{tab:experiment_grid}
+\end{table}
+
+This produces a minimum of 12 core experiment settings:
+\[
+3 \text{ k-values} \times 2 \text{ QI sets} \times 2 \text{ strategies} = 12.
+\]
+
+For each setting, the project will generate:
+
+\begin{itemize}[leftmargin=*]
+    \item one anonymized release
+    \item one linkage-risk summary
+    \item one utility summary
+    \item one row in the final comparison table
+\end{itemize}
+
+\subsection{Required Plots}
+The final report will include at least the following figures:
+
+\begin{itemize}[leftmargin=*]
+    \item Re-identification risk versus $k$
+    \item Utility loss versus $k$
+    \item Optional side-by-side comparison of QI Set A and QI Set B
+\end{itemize}
+
+\section{Planned Results Presentation}
+At the current stage, the implementation and experiments have not yet been executed, so no empirical results are claimed in this report. However, the report structure is already designed to support the final write-up. The completed version will add:
+
+\begin{itemize}[leftmargin=*]
+    \item a table comparing risk metrics across all 12 settings
+    \item plots showing how unique-match risk decreases as $k$ increases
+    \item plots showing how utility loss increases with stronger anonymization
+    \item a short discussion of which QI set and strategy achieve the best balance
+\end{itemize}
+
+The expected qualitative trend is straightforward: increasing $k$ should lower unique-match risk, while stronger transformations should increase information loss. QI Set B is expected to require more aggressive anonymization than QI Set A because it contains more detailed and sparse attributes.
+
+\section{Reproducibility Plan}
+The full implementation will be written in Python using \texttt{pandas} for data handling and \texttt{matplotlib} for visualization, consistent with the course requirements. The local dataset files already available for use are:
+
+\begin{itemize}[leftmargin=*]
+    \item \texttt{adult (1)/adult.data}
+    \item \texttt{adult (1)/adult.test}
+    \item \texttt{adult (1)/adult.names}
+\end{itemize}
+
+The final project package will include:
+
+\begin{itemize}[leftmargin=*]
+    \item a preprocessing script
+    \item an anonymization script or notebook
+    \item an attack evaluation script
+    \item generated plots and summary tables
+    \item a short run guide for reproducing the experiments
+\end{itemize}
+
+\section{Limitations and Ethical Considerations}
+This project intentionally restricts itself to \textbf{k-anonymity only}, because that is the assigned scope. As a result, the final release may still remain vulnerable to attribute disclosure even if direct re-identification risk is reduced. If an equivalence class becomes homogeneous in the sensitive attribute, an attacker may still learn private information without uniquely identifying a person.
+
+Another limitation is that the auxiliary attacker dataset is simulated from the same source population rather than collected from a truly independent external dataset. This is appropriate for controlled evaluation, but it may either overestimate or underestimate real-world risk depending on how external data would actually differ.
+
+Finally, demographic data contains socially sensitive categories. The analysis should therefore be presented carefully, emphasizing privacy methodology rather than making normative claims about the people represented in the data.
+
+\section{Conclusion}
+This starter report defines a complete and feasible roadmap for Project 4 on k-anonymity-based anonymization and re-identification risk analysis. The Adult Census Income dataset provides a realistic testbed with enough scale, sparsity, and attribute diversity to demonstrate meaningful privacy risks. The project will implement two quasi-identifier sets, two anonymization strategies, and three privacy levels; then evaluate both re-identification resistance and utility loss through a controlled experimental design.
+
+The next implementation step is to build the anonymization pipeline and run the 12 required experiment settings. Once those results are available, this document can be extended directly into the final report by filling in the results, plots, and discussion sections.
+
+\begin{thebibliography}{9}
+
+\bibitem{SamaratiSweeney1998}
+P. Samarati and L. Sweeney.
+\newblock Protecting Privacy when Disclosing Information: k-Anonymity and Its Enforcement Through Generalization and Suppression.
+\newblock Technical report, SRI International, 1998.
+
+\bibitem{Sweeney2002}
+L. Sweeney.
+\newblock k-Anonymity: A Model for Protecting Privacy.
+\newblock \textit{International Journal of Uncertainty, Fuzziness and Knowledge-Based Systems}, 10(5):557--570, 2002.
+
+\bibitem{BayardoAgrawal2005}
+R. J. Bayardo and R. Agrawal.
+\newblock Data Privacy through Optimal k-Anonymization.
+\newblock In \textit{Proceedings of the 21st International Conference on Data Engineering (ICDE)}, pages 217--228, 2005.
+
+\bibitem{Machanavajjhala2007}
+A. Machanavajjhala, J. Gehrke, D. Kifer, and M. Venkitasubramaniam.
+\newblock l-Diversity: Privacy Beyond k-Anonymity.
+\newblock \textit{ACM Transactions on Knowledge Discovery from Data}, 1(1), 2007.
+
+\bibitem{Li2007}
+N. Li, T. Li, and S. Venkatasubramanian.
+\newblock t-Closeness: Privacy Beyond k-Anonymity and l-Diversity.
+\newblock In \textit{Proceedings of the 23rd International Conference on Data Engineering (ICDE)}, pages 106--115, 2007.
+
+\bibitem{Fung2010}
+B. C. M. Fung, K. Wang, R. Chen, and P. S. Yu.
+\newblock \textit{Privacy-Preserving Data Publishing: A Survey of Recent Developments}.
+\newblock ACM Computing Surveys, 42(4), 2010.
+
+\bibitem{Kohavi1996}
+R. Kohavi.
+\newblock Scaling Up the Accuracy of Naive-Bayes Classifiers: A Decision-Tree Hybrid.
+\newblock In \textit{Proceedings of the Second International Conference on Knowledge Discovery and Data Mining}, 1996.
+
+\bibitem{UCIAdult}
+UCI Machine Learning Repository.
+\newblock Adult Dataset.
+\newblock \url{https://archive.ics.uci.edu/dataset/2/adult}.
+
+\end{thebibliography}
+
+\end{document}
