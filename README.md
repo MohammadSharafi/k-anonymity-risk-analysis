@@ -15,7 +15,7 @@ The current project uses the Adult Census Income dataset already included in the
 
 ## Current Scope
 
-The starter implementation already includes:
+The project currently includes:
 
 - dataset loading and cleaning
 - two quasi-identifier sets
@@ -23,8 +23,10 @@ The starter implementation already includes:
 - two anonymization strategies
 - linkage attack evaluation
 - utility metrics
+- k-anonymity validation checks
+- a basic automated test suite
 - an experiment runner that saves releases, summary metrics, and plots
-- a starter report in `report/project4_k_anonymity_report.tex`
+- a report in `report/project4_k_anonymity_report.tex`
 
 ## Repository Layout
 
@@ -86,8 +88,16 @@ Outputs are written to:
 - `results/figures/utility_vs_k.png`
 - `results/releases/*.csv`
 
+## Validate Outputs
+
+```bash
+python scripts/validate_project.py
+python -m unittest discover -s tests
+```
+
 ## Notes
 
 - The project intentionally stays within the course scope of `k`-anonymity only.
 - No differential privacy, cryptography, or `l`-diversity methods are used.
 - The current heuristics are designed to be interpretable and easy to explain in the final report and demo.
+- The strongest remaining work is presentation polish and any instructor-specific formatting requirements, not missing core implementation.

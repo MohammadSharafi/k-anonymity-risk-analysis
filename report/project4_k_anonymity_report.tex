@@ -289,20 +289,73 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python scripts/run_experiments.py
+python scripts/validate_project.py
+python -m unittest discover -s tests
 \end{verbatim}
 
 The most relevant files are:
 \begin{itemize}[leftmargin=*]
     \item \texttt{data/raw/adult/adult.data}
     \item \texttt{scripts/run\_experiments.py}
+    \item \texttt{scripts/validate\_project.py}
     \item \texttt{src/k\_anonymity\_risk\_analysis/*.py}
     \item \texttt{results/metrics/experiment\_summary.csv}
+\end{itemize}
+
+The final signoff checks for this project are:
+\begin{itemize}[leftmargin=*]
+    \item all 12 releases are generated successfully,
+    \item every release passes the explicit k-anonymity validator,
+    \item the automated test suite passes,
+    \item the report compiles to PDF with the final plots embedded.
 \end{itemize}
 
 \section{Conclusion}
 This project implemented and evaluated a complete k-anonymity pipeline for the Adult Census Income dataset. The final version is more accurate and complete than the initial baseline because it averages attack outcomes across multiple auxiliary samples, improves the targeted-suppression strategy with mild generalization, and measures utility with a direct information-loss score.
 
 Across all 12 settings, the exact unique match rate dropped to zero. However, the way that result was achieved mattered greatly. Generalization-first eliminated exact uniqueness by heavily coarsening the released data, while targeted suppression achieved strong privacy with much lower information loss. In this implementation, the best practical trade-off is QI Set A with targeted suppression at $k=2$.
+
+\appendix
+\section{Full Experiment Summary}
+Tables~\ref{tab:appendix_set_a} and~\ref{tab:appendix_set_b} list the full 12 experiment outcomes in compact form so that the report contains both the high-level discussion and the complete comparison matrix.
+
+\begin{table}[H]
+\centering
+\scriptsize
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Strategy} & \textbf{$k$} & \textbf{Retention} & \textbf{No-Match} & \textbf{Info Loss} & \textbf{Income Shift} \\
+\midrule
+Generalization-first & 2 & 100.0\% & 0.0\% & 0.667 & 0.0000 \\
+Generalization-first & 5 & 100.0\% & 0.0\% & 0.750 & 0.0000 \\
+Generalization-first & 10 & 100.0\% & 0.0\% & 0.750 & 0.0000 \\
+Targeted suppression & 2 & 98.6\% & 1.5\% & 0.076 & 0.0014 \\
+Targeted suppression & 5 & 97.2\% & 2.9\% & 0.150 & 0.0029 \\
+Targeted suppression & 10 & 94.0\% & 5.9\% & 0.177 & 0.0065 \\
+\bottomrule
+\end{tabular}
+\caption{Complete results for QI Set A.}
+\label{tab:appendix_set_a}
+\end{table}
+
+\begin{table}[H]
+\centering
+\scriptsize
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Strategy} & \textbf{$k$} & \textbf{Retention} & \textbf{No-Match} & \textbf{Info Loss} & \textbf{Income Shift} \\
+\midrule
+Generalization-first & 2 & 100.0\% & 0.0\% & 0.750 & 0.0000 \\
+Generalization-first & 5 & 100.0\% & 0.0\% & 0.750 & 0.0000 \\
+Generalization-first & 10 & 100.0\% & 0.0\% & 0.917 & 0.0000 \\
+Targeted suppression & 2 & 98.7\% & 1.3\% & 0.157 & 0.0004 \\
+Targeted suppression & 5 & 98.7\% & 1.3\% & 0.239 & 0.0013 \\
+Targeted suppression & 10 & 98.5\% & 1.5\% & 0.323 & 0.0025 \\
+\bottomrule
+\end{tabular}
+\caption{Complete results for QI Set B.}
+\label{tab:appendix_set_b}
+\end{table}
 
 \begin{thebibliography}{9}
 
